@@ -6,58 +6,50 @@ const bodyParser = require('body-parser');
 const app = express();
 app.use(bodyParser.json());
 
-
-const db = mysql.createConnection({
+// Create MySQL connection pool
+const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
 });
 
-db.connect((err) => {
-  if (err) {
-    console.error('Database connection failed:', err.stack);
-    return;
-  }
-  console.log('Connected to MySQL database.');
-});
+// Promise-based query pool for async/await
+const promisePool = pool.promise();
 
-
-app.post('/addSchool', (req, res) => {
+// POST - Add School
+app.post('/addSchool', async (req, res) => {
   const { name, address, latitude, longitude } = req.body;
 
-  
   if (!name || !address || !latitude || !longitude) {
     return res.status(400).json({ error: 'All fields are required.' });
   }
 
-  const query = 'INSERT INTO schools (name, address, latitude, longitude) VALUES (?, ?, ?, ?)';
-  db.query(query, [name, address, latitude, longitude], (err, results) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ error: 'Failed to add school.' });
-    }
-    res.status(201).json({ message: 'School added successfully.' });
-  });
+  try {
+    const query = 'INSERT INTO schools (name, address, latitude, longitude) VALUES (?, ?, ?, ?)';
+    const [result] = await promisePool.query(query, [name, address, latitude, longitude]);
+    res.status(201).json({ message: 'School added successfully.', id: result.insertId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to add school.' });
+  }
 });
 
-
-app.get('/listSchools', (req, res) => {
+// GET - List Schools Sorted by Distance
+app.get('/listSchools', async (req, res) => {
   const { latitude, longitude } = req.query;
 
-  
   if (!latitude || !longitude) {
     return res.status(400).json({ error: 'Latitude and longitude are required.' });
   }
 
-  const query = 'SELECT * FROM schools';
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ error: 'Failed to retrieve schools.' });
-    }
+  try {
+    const query = 'SELECT * FROM schools';
+    const [results] = await promisePool.query(query);
 
-    
     const userLat = parseFloat(latitude);
     const userLng = parseFloat(longitude);
 
@@ -81,7 +73,10 @@ app.get('/listSchools', (req, res) => {
     })).sort((a, b) => a.distance - b.distance);
 
     res.json(sortedSchools);
-  });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to retrieve schools.' });
+  }
 });
 
 // Start Server
